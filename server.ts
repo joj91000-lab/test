@@ -766,8 +766,19 @@ app.post('/api/likes', (req, res) => {
   });
 });
 
-// ZIP package download endpoint
+// ZIP package download endpoint (dev-only opt-in; disabled in production by default)
 app.get('/api/download-zip', (req, res) => {
+  const zipAllowed =
+    process.env.ALLOW_ZIP_DOWNLOAD === 'true' &&
+    process.env.NODE_ENV !== 'production';
+
+  if (!zipAllowed) {
+    return res.status(403).json({
+      success: false,
+      message: 'ZIP 下載已停用。本機請設定 ALLOW_ZIP_DOWNLOAD=true 且勿使用 production，或改從 Git 倉庫取得原始碼。'
+    });
+  }
+
   try {
     const zipPath = path.resolve(__dirname, 'techpulse-app.zip');
     const helperScript = path.resolve(__dirname, '.create_zip.py');

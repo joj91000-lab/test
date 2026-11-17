@@ -1,17 +1,17 @@
 // Cloudflare Pages Function for /api/news
-// Operates on Cloudflare Edge runtime with automatic global distribution
+// Aligns payload shape with the Express server + UI (NewsItem).
 
 const RSS_SOURCES = [
-  { id: 'techcrunch', name: 'TechCrunch', domain: 'techcrunch.com', url: 'https://techcrunch.com/feed/', category: 'Startups & VC' },
-  { id: 'theverge', name: 'The Verge', domain: 'theverge.com', url: 'https://www.theverge.com/rss/index.xml', category: 'Consumer Tech' },
-  { id: 'wired', name: 'WIRED', domain: 'wired.com', url: 'https://www.wired.com/feed/rss', category: 'Culture & Policy' },
-  { id: 'arstechnica', name: 'Ars Technica', domain: 'arstechnica.com', url: 'https://feeds.arstechnica.com/arstechnica/index', category: 'Deep Tech & Science' },
-  { id: 'engadget', name: 'Engadget', domain: 'engadget.com', url: 'https://www.engadget.com/rss.xml', category: 'Gadgets & Audio' },
-  { id: '9to5mac', name: '9to5Mac', domain: '9to5mac.com', url: 'https://9to5mac.com/feed/', category: 'Apple Ecosystem' },
-  { id: 'venturebeat', name: 'VentureBeat', domain: 'venturebeat.com', url: 'https://venturebeat.com/category/ai/feed/', category: 'Enterprise AI' },
-  { id: 'zdnet', name: 'ZDNET', domain: 'zdnet.com', url: 'https://www.zdnet.com/news/rss.xml', category: 'Enterprise IT' },
-  { id: 'mittech', name: 'MIT Tech Review', domain: 'technologyreview.com', url: 'https://www.technologyreview.com/feed/', category: 'Science & Emerging' },
-  { id: 'gizmodo', name: 'Gizmodo', domain: 'gizmodo.com', url: 'https://gizmodo.com/feed', category: 'Consumer & Design' }
+  { id: 'techcrunch', name: 'TechCrunch', domain: 'techcrunch.com', url: 'https://techcrunch.com/feed/' },
+  { id: 'theverge', name: 'The Verge', domain: 'theverge.com', url: 'https://www.theverge.com/rss/index.xml' },
+  { id: 'wired', name: 'WIRED', domain: 'wired.com', url: 'https://www.wired.com/feed/rss' },
+  { id: 'arstechnica', name: 'Ars Technica', domain: 'arstechnica.com', url: 'https://feeds.arstechnica.com/arstechnica/index' },
+  { id: 'engadget', name: 'Engadget', domain: 'engadget.com', url: 'https://www.engadget.com/rss.xml' },
+  { id: '9to5mac', name: '9to5Mac', domain: '9to5mac.com', url: 'https://9to5mac.com/feed/' },
+  { id: 'venturebeat', name: 'VentureBeat', domain: 'venturebeat.com', url: 'https://venturebeat.com/category/ai/feed/' },
+  { id: 'zdnet', name: 'ZDNET', domain: 'zdnet.com', url: 'https://www.zdnet.com/news/rss.xml' },
+  { id: 'mittech', name: 'MIT Tech Review', domain: 'technologyreview.com', url: 'https://www.technologyreview.com/feed/' },
+  { id: 'gizmodo', name: 'Gizmodo', domain: 'gizmodo.com', url: 'https://gizmodo.com/feed' }
 ];
 
 function cleanXml(text: string): string {
@@ -28,41 +28,97 @@ function cleanXml(text: string): string {
     .trim();
 }
 
-function parseItems(xmlText: string, source: any) {
+function stableHash(input: string): number {
+  let hash = 0;
+  for (let i = 0; i < input.length; i++) {
+    hash = ((hash << 5) - hash) + input.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
+
+function stableId(sourceId: string, title: string, link: string): string {
+  return `${sourceId}-${stableHash(`${sourceId}|${link || title}`).toString(36)}`;
+}
+
+function stableCount(id: string, min: number, range: number): number {
+  return min + (stableHash(id) % range);
+}
+
+function formatRelativeTime(timestamp: number): string {
+  const diffMinutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000));
+  if (diffMinutes < 1) return 'just now';
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays}d ago`;
+}
+
+function categorizeArticle(title: string, content: string): string {
+  const text = `${title} ${content}`.toLowerCase();
+  if (text.match(/ai|artificial intelligence|llm|chatgpt|openai|anthropic|gemini|deepseek|claude|copilot|machine learning|gpu|h100|b200|reasoning/i)) {
+    return 'AI';
+  }
+  if (text.match(/iphone|ipad|ios|android|pixel|galaxy|samsung|smartphone|mobile|app store|qualcomm|snapdragon/i)) {
+    return 'Mobile';
+  }
+  if (text.match(/antitrust|doj|ftc|court|monopoly|regulation|eu act|congress|lawsuit|policy/i)) {
+    return 'Policy';
+  }
+  if (text.match(/apple|google|microsoft|amazon|meta|alphabet|big tech/i) && text.match(/earnings|stock|ceo|product|platform/i)) {
+    return 'Big Tech';
+  }
+  if (text.match(/chip|semiconductor|tsmc|nvidia|intel|amd|arm|processor|hardware|display|macbook|laptop|wearable|headset|quest|vision pro/i)) {
+    return 'Hardware';
+  }
+  if (text.match(/startup|venture|funding|seed|series a|yc|y combinator|valuation|ipo|acquisition|founder/i)) {
+    return 'Startups';
+  }
+  if (text.match(/security|hack|zero-day|vulnerability|ransomware|malware|cyber|breach|cve|patch/i)) {
+    return 'Cybersecurity';
+  }
+  return 'General';
+}
+
+function parseItems(xmlText: string, source: (typeof RSS_SOURCES)[number]) {
   const items: any[] = [];
   const itemMatches = xmlText.match(/<(?:item|entry)[\s>][\s\S]*?<\/(?:item|entry)>/gi) || [];
 
-  for (const itemXml of itemMatches.slice(0, 10)) {
+  for (const [idx, itemXml] of itemMatches.slice(0, 10).entries()) {
     const titleMatch = itemXml.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
     const linkMatch = itemXml.match(/<link[^>]*href=["']([^"']+)["']/i) || itemXml.match(/<link[^>]*>([\s\S]*?)<\/link>/i);
     const descMatch = itemXml.match(/<(?:description|summary|content)[^>]*>([\s\S]*?)<\/(?:description|summary|content)>/i);
     const dateMatch = itemXml.match(/<(?:pubDate|published|updated)[^>]*>([\s\S]*?)<\/(?:pubDate|published|updated)>/i);
+    const authorMatch = itemXml.match(/<(?:dc:creator|author|name)[^>]*>([\s\S]*?)<\/(?:dc:creator|author|name)>/i);
     const imgMatch = itemXml.match(/<img[^>]+src=["'](https?:\/\/[^"'\s>]+)["']/i) ||
                      itemXml.match(/<(?:media:content|media:thumbnail|enclosure)[^>]+url=["'](https?:\/\/[^"'\s>]+)["']/i);
 
     const title = cleanXml(titleMatch ? titleMatch[1] : '');
     const link = linkMatch ? (linkMatch[1] || linkMatch[0]).replace(/<[^>]+>/g, '').trim() : `https://${source.domain}`;
-    const summary = cleanXml(descMatch ? descMatch[1] : '').slice(0, 260);
+    const summary = cleanXml(descMatch ? descMatch[1] : '').slice(0, 340);
     const imageUrl = imgMatch ? imgMatch[1] : undefined;
+    const rawDate = dateMatch ? cleanXml(dateMatch[1]) : '';
+    const timestamp = (rawDate && !Number.isNaN(Date.parse(rawDate)) ? Date.parse(rawDate) : NaN)
+      || (Date.now() - idx * 14 * 60 * 1000);
 
     if (title && title.length > 5) {
+      const id = stableId(source.id, title, link);
       items.push({
-        id: `${source.id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        id,
         title,
         link,
         summary: summary || title,
         sourceId: source.id,
         sourceName: source.name,
         sourceDomain: source.domain,
-        author: source.name,
-        publishedAt: dateMatch ? dateMatch[1].trim() : '近期發布',
-        relativeTime: '即時快訊',
-        timestamp: Date.now(),
-        category: source.category,
-        likesCount: 15 + Math.floor(Math.random() * 25),
-        commentsCount: 2 + Math.floor(Math.random() * 8),
-        isHot: Math.random() > 0.65,
-        salienceScore: 70 + Math.floor(Math.random() * 30),
+        author: cleanXml(authorMatch ? authorMatch[1] : '') || source.name,
+        pubDate: new Date(timestamp).toUTCString(),
+        timeAgo: formatRelativeTime(timestamp),
+        timestamp,
+        category: categorizeArticle(title, summary),
+        likesCount: stableCount(id, 15, 40),
+        commentsCount: stableCount(`${id}-c`, 0, 9),
         imageUrl
       });
     }
@@ -70,7 +126,64 @@ function parseItems(xmlText: string, source: any) {
   return items;
 }
 
-export async function onRequestGet({ request }: { request: Request }) {
+function clusterStories(allNews: any[]) {
+  const sorted = [...allNews].sort((a, b) => b.timestamp - a.timestamp);
+  const clustered: any[] = [];
+  const assigned = new Set<string>();
+
+  const getKeywords = (str: string) =>
+    str
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, '')
+      .split(/\s+/)
+      .filter(w => w.length > 3 && !['with', 'from', 'that', 'this', 'have', 'what', 'after', 'about', 'more', 'into', 'first', 'over', 'will', 'their', 'been'].includes(w));
+
+  for (let i = 0; i < sorted.length; i++) {
+    const main = sorted[i];
+    if (assigned.has(main.id)) continue;
+
+    assigned.add(main.id);
+    const mainKeywords = new Set(getKeywords(main.title));
+    const relatedStories: any[] = [];
+
+    for (let j = i + 1; j < sorted.length; j++) {
+      const candidate = sorted[j];
+      if (assigned.has(candidate.id) || candidate.sourceId === main.sourceId) continue;
+
+      const candKeywords = getKeywords(candidate.title);
+      let matchCount = 0;
+      for (const kw of candKeywords) {
+        if (mainKeywords.has(kw)) matchCount++;
+      }
+
+      if (
+        matchCount >= 2 ||
+        (candKeywords.some(k => ['openai', 'apple', 'nvidia', 'antitrust', 'tsmc', 'google', 'meta', 'microsoft', 'battery'].includes(k)) &&
+          matchCount >= 1)
+      ) {
+        relatedStories.push({
+          title: candidate.title,
+          link: candidate.link,
+          sourceName: candidate.sourceName,
+          sourceDomain: candidate.sourceDomain,
+          timeAgo: candidate.timeAgo
+        });
+        assigned.add(candidate.id);
+        if (relatedStories.length >= 4) break;
+      }
+    }
+
+    clustered.push({
+      ...main,
+      relatedStories,
+      isLeadStory: i < 3
+    });
+  }
+
+  return clustered;
+}
+
+export async function onRequestGet() {
   const fetchPromises = RSS_SOURCES.map(async (src) => {
     try {
       const resp = await fetch(src.url, {
@@ -82,7 +195,9 @@ export async function onRequestGet({ request }: { request: Request }) {
         const text = await resp.text();
         return parseItems(text, src);
       }
-    } catch {}
+    } catch {
+      // Ignore per-source failures; other feeds may still succeed.
+    }
     return [];
   });
 
@@ -94,10 +209,12 @@ export async function onRequestGet({ request }: { request: Request }) {
     }
   });
 
+  const clustered = clusterStories(allArticles);
+
   return new Response(JSON.stringify({
     success: true,
-    data: allArticles,
-    total: allArticles.length,
+    data: clustered,
+    total: clustered.length,
     cached: false,
     timestamp: new Date().toISOString()
   }), {

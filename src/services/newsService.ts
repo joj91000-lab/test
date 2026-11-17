@@ -62,6 +62,11 @@ export async function fetchNewsArticles(forceRefresh = false): Promise<NewsItem[
       ...r,
       titleZh: r.titleZh || translateTitle(r.title)
     }));
+    const timestamp = typeof item.timestamp === 'number' && item.timestamp > 0
+      ? item.timestamp
+      : (item.pubDate || item.publishedAt ? Date.parse(item.pubDate || item.publishedAt) : Date.now());
+    const pubDate = item.pubDate || item.publishedAt || new Date(timestamp).toUTCString();
+    const timeAgo = item.timeAgo || item.relativeTime || '';
 
     return {
       ...item,
@@ -69,6 +74,9 @@ export async function fetchNewsArticles(forceRefresh = false): Promise<NewsItem[
       summaryZh,
       imageUrl,
       relatedStories,
+      pubDate,
+      timestamp: Number.isFinite(timestamp) ? timestamp : Date.now(),
+      timeAgo,
       isLiked,
       commentsCount: (item.commentsCount || 0) + itemLocalComments.length
     };
@@ -110,6 +118,33 @@ export async function fetchSources(): Promise<NewsSource[]> {
   return TOP_10_SOURCES;
 }
 
+function commentDedupeKey(c: NewsComment): string {
+  return `${c.newsId}|${c.author.trim().toLowerCase()}|${c.content.trim()}`;
+}
+
+function mergeComments(...groups: NewsComment[][]): NewsComment[] {
+  const byId = new Map<string, NewsComment>();
+  const byContent = new Map<string, string>();
+
+  for (const group of groups) {
+    for (const comment of group) {
+      const contentKey = commentDedupeKey(comment);
+      const existingId = byContent.get(contentKey);
+      if (existingId && existingId !== comment.id) {
+        // Prefer non-temp server ids over c_local_* duplicates
+        if (comment.id.startsWith('c_local_') && !existingId.startsWith('c_local_')) {
+          continue;
+        }
+        byId.delete(existingId);
+      }
+      byId.set(comment.id, comment);
+      byContent.set(contentKey, comment.id);
+    }
+  }
+
+  return Array.from(byId.values()).sort((a, b) => b.timestamp - a.timestamp);
+}
+
 export async function fetchCommentsForNews(newsId: string): Promise<NewsComment[]> {
   const localStored = getStoredComments().filter(c => c.newsId === newsId);
   const initial = INITIAL_COMMENTS.filter(c => c.newsId === newsId);
@@ -119,21 +154,14 @@ export async function fetchCommentsForNews(newsId: string): Promise<NewsComment[
     if (res.ok) {
       const json = await res.json();
       if (json.success && Array.isArray(json.data) && json.data.length > 0) {
-        // Deduplicate
-        const map = new Map<string, NewsComment>();
-        json.data.forEach((c: NewsComment) => map.set(c.id, c));
-        localStored.forEach((c: NewsComment) => map.set(c.id, c));
-        return Array.from(map.values()).sort((a, b) => b.timestamp - a.timestamp);
+        return mergeComments(json.data, localStored);
       }
     }
   } catch (err) {
     console.warn('Could not fetch comments from API:', err);
   }
 
-  const map = new Map<string, NewsComment>();
-  initial.forEach(c => map.set(c.id, c));
-  localStored.forEach(c => map.set(c.id, c));
-  return Array.from(map.values()).sort((a, b) => b.timestamp - a.timestamp);
+  return mergeComments(initial, localStored);
 }
 
 export async function postComment(newsId: string, author: string, content: string): Promise<NewsComment> {
@@ -164,6 +192,9 @@ export async function postComment(newsId: string, author: string, content: strin
     if (res.ok) {
       const json = await res.json();
       if (json.success && json.data) {
+        const withoutTemp = localList.filter(c => c.id !== tempComment.id);
+        withoutTemp.unshift(json.data);
+        saveStoredComments(withoutTemp);
         return json.data;
       }
     }

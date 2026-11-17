@@ -17,6 +17,34 @@ export const Navbar: React.FC<NavbarProps> = ({
   isRefreshing,
   totalArticles
 }) => {
+  const handleDownloadZip = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    try {
+      const res = await fetch('/api/download-zip');
+      const contentType = res.headers.get('content-type') || '';
+      if (!res.ok || contentType.includes('application/json')) {
+        const payload = contentType.includes('application/json') ? await res.json().catch(() => null) : null;
+        window.alert(
+          payload?.message ||
+            '目前環境無法產生 ZIP。請改從 Git 倉庫下載，或在本機以 ALLOW_ZIP_DOWNLOAD=true 執行 npm run dev。'
+        );
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'techpulse-app.zip';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      window.alert('下載 ZIP 失敗，請稍後再試或改從 Git 倉庫取得原始碼。');
+    }
+  };
+
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-stone-200 transition-colors">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -87,15 +115,15 @@ export const Navbar: React.FC<NavbarProps> = ({
 
           {/* Zone 3: 下載 ZIP 與 重新整理 RSS 操作 */}
           <div className="flex items-center gap-2 shrink-0">
-            <a
-              href="/api/download-zip"
-              download="techpulse-app.zip"
+            <button
+              type="button"
+              onClick={handleDownloadZip}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-stone-700 hover:text-stone-900 bg-stone-100 hover:bg-stone-200 border border-stone-200 rounded-md transition-all shadow-xs whitespace-nowrap cursor-pointer"
               title="下載完整專案源碼 ZIP 壓縮檔"
             >
               <Download className="w-3.5 h-3.5 text-stone-600" />
               <span className="hidden sm:inline">下載 ZIP</span>
-            </a>
+            </button>
 
             <button
               onClick={onRefresh}
