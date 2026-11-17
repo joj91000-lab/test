@@ -208,30 +208,29 @@ function clusterStories(allNews: any[]) {
 
 const NEWS_TTL_MS = 180_000;
 let newsCache: { at: number; body: string; etag: string } | null = null;
+/** Coalesce concurrent cold misses inside one isolate so Gemini is not fan-out amplified. */
+let newsInflight: Promise<{ body: string; etag: string }> | null = null;
 
 function newsHeaders(extra: Record<string, string> = {}) {
   return {
     'Content-Type': 'application/json; charset=utf-8',
-    // Query strings are ignored by this handler; keep a single CDN key for /api/news.
+    // Path-only CDN key: query strings are ignored by this handler.
     'Cache-Control': 'public, max-age=180, s-maxage=180',
     'CDN-Cache-Control': 'public, max-age=180',
+    'Cloudflare-CDN-Cache-Control': 'public, max-age=180',
     ...extra
   };
 }
 
-export async function onRequestGet(context: { request: Request; env: GeminiEnv & { GEMINI_MODEL?: string } }) {
-  const { env } = context;
-  // Intentionally ignore request URL query (?refresh=…) — public cache-busting burns Gemini quota.
-  const now = Date.now();
-  if (newsCache && now - newsCache.at < NEWS_TTL_MS) {
-    return new Response(newsCache.body, {
-      headers: newsHeaders({
-        ETag: newsCache.etag,
-        'X-News-Cache': 'HIT'
-      })
-    });
-  }
+/** Stable cache key that drops ?refresh= and other query params. */
+function pathOnlyCacheRequest(request: Request): Request {
+  const url = new URL(request.url);
+  url.search = '';
+  url.hash = '';
+  return new Request(url.toString(), { method: 'GET' });
+}
 
+async function buildNewsPayload(env: GeminiEnv & { GEMINI_MODEL?: string }) {
   const fetchPromises = RSS_SOURCES.map(async (src) => {
     try {
       const resp = await fetch(src.url, {
@@ -270,12 +269,65 @@ export async function onRequestGet(context: { request: Request; env: GeminiEnv &
     timestamp: new Date().toISOString()
   });
   const etag = `"news-${stableHash(body).toString(36)}"`;
-  newsCache = { at: now, body, etag };
+  return { body, etag };
+}
 
-  return new Response(body, {
+export async function onRequestGet(context: {
+  request: Request;
+  env: GeminiEnv & { GEMINI_MODEL?: string };
+  waitUntil?: (promise: Promise<unknown>) => void;
+}) {
+  const { request, env, waitUntil } = context;
+  // Intentionally ignore request URL query (?refresh=…) — public cache-busting burns Gemini quota.
+  const cacheKey = pathOnlyCacheRequest(request);
+
+  try {
+    const cached = await caches.default.match(cacheKey);
+    if (cached) {
+      const headers = new Headers(cached.headers);
+      headers.set('X-News-Cache', 'CDN-HIT');
+      return new Response(cached.body, { status: cached.status, headers });
+    }
+  } catch {
+    // caches.default may be unavailable in some local runtimes; fall through.
+  }
+
+  const now = Date.now();
+  if (newsCache && now - newsCache.at < NEWS_TTL_MS) {
+    return new Response(newsCache.body, {
+      headers: newsHeaders({
+        ETag: newsCache.etag,
+        'X-News-Cache': 'HIT'
+      })
+    });
+  }
+
+  if (!newsInflight) {
+    newsInflight = buildNewsPayload(env)
+      .then((payload) => {
+        newsCache = { at: Date.now(), body: payload.body, etag: payload.etag };
+        return payload;
+      })
+      .finally(() => {
+        newsInflight = null;
+      });
+  }
+
+  const payload = await newsInflight;
+  const response = new Response(payload.body, {
     headers: newsHeaders({
-      ETag: etag,
+      ETag: payload.etag,
       'X-News-Cache': 'MISS'
     })
   });
+
+  try {
+    const put = caches.default.put(cacheKey, response.clone());
+    if (typeof waitUntil === 'function') waitUntil(put);
+    else await put;
+  } catch {
+    // Ignore cache put failures; response is still returned.
+  }
+
+  return response;
 }
