@@ -107,13 +107,13 @@ export default function App() {
   const { leadStories, restStories } = useMemo(() => {
     const leads = filteredArticles.filter(a => a.isLeadStory || (a.relatedStories && a.relatedStories.length > 0));
     const leadSlice = leads.slice(0, 5);
-    // Related coverage stays in the feed for source tabs, but hide those
-    // links from the frontpage secondary list to avoid duplicating the lead cluster.
-    const relatedLinks = new Set(
-      leadSlice.flatMap(a => (a.relatedStories || []).map(r => r.link))
+    // Hide clustered-related items from the frontpage secondary list by stable id
+    // (not by link — RSS/seed fallbacks may reuse outlet homepages).
+    const relatedIds = new Set(
+      leadSlice.flatMap(a => (a.relatedStories || []).map(r => r.id).filter(Boolean) as string[])
     );
     const rest = filteredArticles.filter(
-      a => !leadSlice.includes(a) && !relatedLinks.has(a.link)
+      a => !leadSlice.includes(a) && !a.isClusteredRelated && !relatedIds.has(a.id)
     );
     return { leadStories: leadSlice, restStories: rest };
   }, [filteredArticles]);

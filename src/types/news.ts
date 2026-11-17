@@ -25,6 +25,7 @@ export interface NewsComment {
 }
 
 export interface RelatedCoverage {
+  id?: string;
   title: string;
   titleZh?: string;
   link: string;
@@ -65,6 +66,8 @@ export interface NewsItem {
   isLiked?: boolean;
   commentsCount: number;
   isLeadStory?: boolean;
+  /** True when this item is related coverage under another lead (still shown in source tabs). */
+  isClusteredRelated?: boolean;
   relatedStories?: RelatedCoverage[];
   discussions?: NewsDiscussion[];
 }

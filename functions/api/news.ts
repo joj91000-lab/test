@@ -164,6 +164,7 @@ function clusterStories(allNews: any[]) {
           matchCount >= 1)
       ) {
         relatedStories.push({
+          id: candidate.id,
           title: candidate.title,
           link: candidate.link,
           sourceName: candidate.sourceName,
@@ -189,13 +190,15 @@ function clusterStories(allNews: any[]) {
       return {
         ...article,
         relatedStories: meta.relatedStories,
-        isLeadStory: meta.isLeadStory
+        isLeadStory: meta.isLeadStory,
+        isClusteredRelated: false
       };
     }
     return {
       ...article,
       relatedStories: article.relatedStories || [],
-      isLeadStory: false
+      isLeadStory: false,
+      isClusteredRelated: usedAsRelated.has(article.id)
     };
   });
 }
