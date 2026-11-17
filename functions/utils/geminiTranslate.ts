@@ -139,14 +139,16 @@ export async function enrichArticlesWithZh<T extends {
     return articles;
   }
 
-  // Cap work per request so a large RSS fan-out cannot unbounded-spend Gemini.
-  const limited = articles.slice(0, 80);
-  const titles = limited.map((a) => a.title);
-  const summaries = limited.map((a) => a.summary || a.title);
+  // Translate only the first N items to bound Gemini spend, but always return
+  // the full article list so source tabs / river / totals stay complete.
+  const TRANSLATE_LIMIT = 80;
+  const toTranslate = articles.slice(0, TRANSLATE_LIMIT);
+  const titles = toTranslate.map((a) => a.title);
+  const summaries = toTranslate.map((a) => a.summary || a.title);
   const relatedTitles: string[] = [];
   const relatedIndex: Array<{ articleIdx: number; relatedIdx: number }> = [];
 
-  limited.forEach((a, articleIdx) => {
+  toTranslate.forEach((a, articleIdx) => {
     (a.relatedStories || []).slice(0, 4).forEach((r, relatedIdx) => {
       relatedTitles.push(r.title);
       relatedIndex.push({ articleIdx, relatedIdx });
@@ -159,7 +161,11 @@ export async function enrichArticlesWithZh<T extends {
     translateTexts(env, relatedTitles, 'title')
   ]);
 
-  return limited.map((article, i) => {
+  return articles.map((article, i) => {
+    if (i >= TRANSLATE_LIMIT) {
+      return article;
+    }
+
     const relatedStories = (article.relatedStories || []).slice(0, 4).map((r, relatedIdx) => {
       const flatIdx = relatedIndex.findIndex(
         (x) => x.articleIdx === i && x.relatedIdx === relatedIdx
