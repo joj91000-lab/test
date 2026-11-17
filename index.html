@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Ignore HMR WebSocket connection errors as specified in environment constraints
+      window.addEventListener('error', function(e) {
+        if (e.filename && e.filename.includes('@vite/client')) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          return true;
+        }
+      }, true);
+      window.addEventListener('unhandledrejection', function(e) {
+        if (e.reason && (String(e.reason).includes('WebSocket') || String(e.reason.stack).includes('@vite/client'))) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+        }
+      }, true);
+    </script>
+    <title>TechPulse 科技脈動 - 全美十大科技媒體 RSS 即時聚合</title>
+    <meta name="description" content="TechPulse 全美十大科技媒體即時 RSS 聚合快報，提供中英雙語對照摘要、即時科技社群討論與主題分類，合規合理使用開源摘要。" />
+    <meta property="og:title" content="TechPulse 科技脈動 - 全美十大科技媒體 RSS 即時聚合" />
+    <meta property="og:description" content="TechPulse 全美十大科技媒體即時 RSS 聚合快報，提供中英雙語對照摘要、即時科技社群討論與主題分類，合規合理使用開源摘要。" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400..700&family=Lora:ital,wght@0,400..700;1,400..700&family=Plus+Jakarta+Sans:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
