@@ -5,9 +5,15 @@
 
 export type GeminiEnv = {
   GEMINI_API_KEY?: string;
+  GEMINI_MODEL?: string;
 };
 
-const MODEL = 'gemini-2.0-flash';
+// gemini-2.0-flash is shut down; prefer current Flash-Lite for high-volume translation.
+const DEFAULT_MODEL = 'gemini-3.5-flash-lite';
+
+function resolveModel(env?: GeminiEnv): string {
+  return (env?.GEMINI_MODEL || DEFAULT_MODEL).trim();
+}
 
 function extractJsonArray(text: string): string[] | null {
   if (!text) return null;
@@ -29,15 +35,9 @@ function extractJsonArray(text: string): string[] | null {
   return null;
 }
 
-/** Lightweight offline fallback when Gemini is unavailable. */
-export function fallbackTranslate(text: string, kind: 'title' | 'summary'): string {
-  if (!text) return '';
-  if (kind === 'title') return `【科技要聞】${text}`;
-  return text;
-}
-
 async function geminiTranslateBatch(
   apiKey: string,
+  model: string,
   texts: string[],
   kind: 'title' | 'summary'
 ): Promise<string[] | null> {
@@ -53,7 +53,7 @@ async function geminiTranslateBatch(
     JSON.stringify(texts)
   ].join('\n');
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
   const res = await fetch(url, {
     method: 'POST',
     headers: {
@@ -63,7 +63,7 @@ async function geminiTranslateBatch(
     body: JSON.stringify({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: {
-        temperature: 0.2,
+        // Avoid deprecated sampling params on Gemini 3.x Flash family.
         responseMimeType: 'application/json'
       }
     })
@@ -86,35 +86,38 @@ async function geminiTranslateBatch(
 }
 
 /**
- * Translate many strings with Gemini (chunked). Falls back per-item when key missing or API fails.
+ * Translate many strings with Gemini (chunked).
+ * Returns null per item when the key is missing or the API fails, so the client
+ * dictionary translator can run instead of a weak server-side English prefix.
  */
 export async function translateTexts(
   env: GeminiEnv | undefined,
   texts: string[],
   kind: 'title' | 'summary'
-): Promise<string[]> {
+): Promise<Array<string | null>> {
   const apiKey = env?.GEMINI_API_KEY?.trim();
   const maxLen = kind === 'title' ? 400 : 1200;
   const capped = texts.map((t) => String(t || '').slice(0, maxLen)).slice(0, 80);
   if (!apiKey) {
-    return capped.map((t) => fallbackTranslate(t, kind));
+    return capped.map(() => null);
   }
 
-  const out = new Array<string>(capped.length);
+  const model = resolveModel(env);
+  const out = new Array<string | null>(capped.length);
   const chunkSize = 12;
 
   for (let i = 0; i < capped.length; i += chunkSize) {
     const slice = capped.slice(i, i + chunkSize);
     try {
-      const translated = await geminiTranslateBatch(apiKey, slice, kind);
+      const translated = await geminiTranslateBatch(apiKey, model, slice, kind);
       if (translated) {
-        for (let j = 0; j < slice.length; j++) out[i + j] = translated[j] || fallbackTranslate(slice[j], kind);
+        for (let j = 0; j < slice.length; j++) out[i + j] = translated[j] || null;
       } else {
-        for (let j = 0; j < slice.length; j++) out[i + j] = fallbackTranslate(slice[j], kind);
+        for (let j = 0; j < slice.length; j++) out[i + j] = null;
       }
     } catch (err) {
       console.error('Gemini batch error', err);
-      for (let j = 0; j < slice.length; j++) out[i + j] = fallbackTranslate(slice[j], kind);
+      for (let j = 0; j < slice.length; j++) out[i + j] = null;
     }
   }
 
@@ -130,6 +133,11 @@ export async function enrichArticlesWithZh<T extends {
   relatedStories?: Array<{ title: string; titleZh?: string }>;
 }>(env: GeminiEnv | undefined, articles: T[]): Promise<T[]> {
   if (articles.length === 0) return articles;
+
+  // No key → leave zh fields unset so the browser dictionary fallback can run.
+  if (!env?.GEMINI_API_KEY?.trim()) {
+    return articles;
+  }
 
   // Cap work per request so a large RSS fan-out cannot unbounded-spend Gemini.
   const limited = articles.slice(0, 80);
@@ -156,16 +164,18 @@ export async function enrichArticlesWithZh<T extends {
       const flatIdx = relatedIndex.findIndex(
         (x) => x.articleIdx === i && x.relatedIdx === relatedIdx
       );
-      return {
-        ...r,
-        titleZh: r.titleZh || (flatIdx >= 0 ? relatedZhList[flatIdx] : fallbackTranslate(r.title, 'title'))
-      };
+      const relatedZh =
+        r.titleZh || (flatIdx >= 0 ? relatedZhList[flatIdx] || undefined : undefined);
+      return relatedZh ? { ...r, titleZh: relatedZh } : { ...r };
     });
+
+    const titleZh = article.titleZh || titleZhList[i] || undefined;
+    const summaryZh = article.summaryZh || summaryZhList[i] || undefined;
 
     return {
       ...article,
-      titleZh: article.titleZh || titleZhList[i],
-      summaryZh: article.summaryZh || summaryZhList[i],
+      ...(titleZh ? { titleZh } : {}),
+      ...(summaryZh ? { summaryZh } : {}),
       relatedStories
     };
   });

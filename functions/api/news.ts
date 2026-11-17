@@ -219,7 +219,7 @@ function newsHeaders(extra: Record<string, string> = {}) {
   };
 }
 
-export async function onRequestGet(context: { request: Request; env: GeminiEnv }) {
+export async function onRequestGet(context: { request: Request; env: GeminiEnv & { GEMINI_MODEL?: string } }) {
   const { env } = context;
   // Intentionally ignore request URL query (?refresh=…) — public cache-busting burns Gemini quota.
   const now = Date.now();

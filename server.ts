@@ -17,7 +17,10 @@ const PORT = 3000;
 
 app.use(express.json());
 
-const geminiEnv = { GEMINI_API_KEY: process.env.GEMINI_API_KEY };
+const geminiEnv = {
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+  GEMINI_MODEL: process.env.GEMINI_MODEL
+};
 
 interface SourceConfig {
   id: string;
