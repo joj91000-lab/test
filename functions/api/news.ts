@@ -128,27 +128,29 @@ function parseItems(xmlText: string, source: (typeof RSS_SOURCES)[number]) {
 
 function clusterStories(allNews: any[]) {
   const sorted = [...allNews].sort((a, b) => b.timestamp - a.timestamp);
-  const clustered: any[] = [];
-  const assigned = new Set<string>();
+  const usedAsRelated = new Set<string>();
+  const headMeta = new Map<string, { relatedStories: any[]; isLeadStory: boolean }>();
 
   const getKeywords = (str: string) =>
     str
       .toLowerCase()
       .replace(/[^a-z0-9\s]/g, '')
       .split(/\s+/)
-      .filter(w => w.length > 3 && !['with', 'from', 'that', 'this', 'have', 'what', 'after', 'about', 'more', 'into', 'first', 'over', 'will', 'their', 'been'].includes(w));
+      .filter(w => w.length > 3 && !['with', 'from', 'that', 'this', 'have', 'what', 'after', 'about', 'more', 'into', 'first', 'over', 'will', 'their', 'says'].includes(w));
 
+  let leadCount = 0;
   for (let i = 0; i < sorted.length; i++) {
     const main = sorted[i];
-    if (assigned.has(main.id)) continue;
+    // Related coverage stays in the top-level feed for source tabs / river,
+    // but should not become a second cluster head.
+    if (usedAsRelated.has(main.id)) continue;
 
-    assigned.add(main.id);
     const mainKeywords = new Set(getKeywords(main.title));
     const relatedStories: any[] = [];
 
     for (let j = i + 1; j < sorted.length; j++) {
       const candidate = sorted[j];
-      if (assigned.has(candidate.id) || candidate.sourceId === main.sourceId) continue;
+      if (usedAsRelated.has(candidate.id) || candidate.sourceId === main.sourceId) continue;
 
       const candKeywords = getKeywords(candidate.title);
       let matchCount = 0;
@@ -168,19 +170,34 @@ function clusterStories(allNews: any[]) {
           sourceDomain: candidate.sourceDomain,
           timeAgo: candidate.timeAgo
         });
-        assigned.add(candidate.id);
+        usedAsRelated.add(candidate.id);
         if (relatedStories.length >= 4) break;
       }
     }
 
-    clustered.push({
-      ...main,
+    headMeta.set(main.id, {
       relatedStories,
-      isLeadStory: i < 3
+      isLeadStory: leadCount < 3
     });
+    leadCount += 1;
   }
 
-  return clustered;
+  // Keep every article so source tabs / counts / river are complete.
+  return sorted.map((article) => {
+    const meta = headMeta.get(article.id);
+    if (meta) {
+      return {
+        ...article,
+        relatedStories: meta.relatedStories,
+        isLeadStory: meta.isLeadStory
+      };
+    }
+    return {
+      ...article,
+      relatedStories: article.relatedStories || [],
+      isLeadStory: false
+    };
+  });
 }
 
 export async function onRequestGet() {

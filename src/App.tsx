@@ -106,8 +106,16 @@ export default function App() {
   // 聚合頁頭條與一般報導切分
   const { leadStories, restStories } = useMemo(() => {
     const leads = filteredArticles.filter(a => a.isLeadStory || (a.relatedStories && a.relatedStories.length > 0));
-    const rest = filteredArticles.filter(a => !leads.includes(a));
-    return { leadStories: leads.slice(0, 5), restStories: rest.length > 0 ? rest : filteredArticles.slice(5) };
+    const leadSlice = leads.slice(0, 5);
+    // Related coverage stays in the feed for source tabs, but hide those
+    // links from the frontpage secondary list to avoid duplicating the lead cluster.
+    const relatedLinks = new Set(
+      leadSlice.flatMap(a => (a.relatedStories || []).map(r => r.link))
+    );
+    const rest = filteredArticles.filter(
+      a => !leadSlice.includes(a) && !relatedLinks.has(a.link)
+    );
+    return { leadStories: leadSlice, restStories: rest };
   }, [filteredArticles]);
 
   // 按讚操作處理

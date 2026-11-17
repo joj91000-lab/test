@@ -585,31 +585,33 @@ async function fetchSourceFeed(source: SourceConfig) {
   return getCuratedItemsForSource(source);
 }
 
-// Cluster related news items together like Techmeme
+// Cluster related news items together like Techmeme.
+// Related coverage is linked on lead cards but articles stay in the top-level
+// feed so source tabs / river / counts remain complete.
 function clusterStories(allNews: any[]) {
   const sorted = [...allNews].sort((a, b) => b.timestamp - a.timestamp);
-  const clustered: any[] = [];
-  const assigned = new Set<string>();
+  const usedAsRelated = new Set<string>();
+  const headMeta = new Map<string, { relatedStories: any[]; isLeadStory: boolean }>();
 
   const getKeywords = (str: string) => {
     return str
       .toLowerCase()
       .replace(/[^a-z0-9\s]/g, '')
       .split(/\s+/)
-      .filter(w => w.length > 3 && !['with', 'from', 'that', 'this', 'have', 'what', 'after', 'about', 'more', 'into', 'first', 'over', 'will', 'their', 'been'].includes(w));
+      .filter(w => w.length > 3 && !['with', 'from', 'that', 'this', 'have', 'what', 'after', 'about', 'more', 'into', 'first', 'over', 'will', 'their', 'says'].includes(w));
   };
 
+  let leadCount = 0;
   for (let i = 0; i < sorted.length; i++) {
     const main = sorted[i];
-    if (assigned.has(main.id)) continue;
+    if (usedAsRelated.has(main.id)) continue;
 
-    assigned.add(main.id);
     const mainKeywords = new Set(getKeywords(main.title));
     const relatedStories: any[] = [];
 
     for (let j = i + 1; j < sorted.length; j++) {
       const candidate = sorted[j];
-      if (assigned.has(candidate.id) || candidate.sourceId === main.sourceId) continue;
+      if (usedAsRelated.has(candidate.id) || candidate.sourceId === main.sourceId) continue;
 
       const candKeywords = getKeywords(candidate.title);
       let matchCount = 0;
@@ -625,19 +627,33 @@ function clusterStories(allNews: any[]) {
           sourceDomain: candidate.sourceDomain,
           timeAgo: candidate.timeAgo
         });
-        assigned.add(candidate.id);
+        usedAsRelated.add(candidate.id);
         if (relatedStories.length >= 4) break;
       }
     }
 
-    clustered.push({
-      ...main,
+    headMeta.set(main.id, {
       relatedStories: (main.relatedStories && main.relatedStories.length > 0) ? main.relatedStories : relatedStories,
-      isLeadStory: i < 3
+      isLeadStory: leadCount < 3
     });
+    leadCount += 1;
   }
 
-  return clustered;
+  return sorted.map((article) => {
+    const meta = headMeta.get(article.id);
+    if (meta) {
+      return {
+        ...article,
+        relatedStories: meta.relatedStories,
+        isLeadStory: meta.isLeadStory
+      };
+    }
+    return {
+      ...article,
+      relatedStories: article.relatedStories || [],
+      isLeadStory: false
+    };
+  });
 }
 
 // API Routes
