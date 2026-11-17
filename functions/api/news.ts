@@ -259,6 +259,8 @@ async function buildNewsPayload(env: GeminiEnv & { GEMINI_MODEL?: string }) {
   const clustered = clusterStories(allArticles);
   // Gemini runs only on the edge/server — API key never ships to the browser.
   const data = await enrichArticlesWithZh(env, clustered);
+  // Never poison shared/isolate cache with empty RSS misses — let the next request retry.
+  const cacheable = data.length >= 5;
 
   const body = JSON.stringify({
     success: true,
@@ -269,7 +271,7 @@ async function buildNewsPayload(env: GeminiEnv & { GEMINI_MODEL?: string }) {
     timestamp: new Date().toISOString()
   });
   const etag = `"news-${stableHash(body).toString(36)}"`;
-  return { body, etag };
+  return { body, etag, cacheable };
 }
 
 export async function onRequestGet(context: {
@@ -305,7 +307,9 @@ export async function onRequestGet(context: {
   if (!newsInflight) {
     newsInflight = buildNewsPayload(env)
       .then((payload) => {
-        newsCache = { at: Date.now(), body: payload.body, etag: payload.etag };
+        if (payload.cacheable) {
+          newsCache = { at: Date.now(), body: payload.body, etag: payload.etag };
+        }
         return payload;
       })
       .finally(() => {
@@ -317,16 +321,26 @@ export async function onRequestGet(context: {
   const response = new Response(payload.body, {
     headers: newsHeaders({
       ETag: payload.etag,
-      'X-News-Cache': 'MISS'
+      'X-News-Cache': payload.cacheable ? 'MISS' : 'BYPASS-EMPTY',
+      // Empty payloads must not be stored by intermediary caches.
+      ...(payload.cacheable
+        ? {}
+        : {
+            'Cache-Control': 'no-store',
+            'CDN-Cache-Control': 'no-store',
+            'Cloudflare-CDN-Cache-Control': 'no-store'
+          })
     })
   });
 
-  try {
-    const put = caches.default.put(cacheKey, response.clone());
-    if (typeof waitUntil === 'function') waitUntil(put);
-    else await put;
-  } catch {
-    // Ignore cache put failures; response is still returned.
+  if (payload.cacheable) {
+    try {
+      const put = caches.default.put(cacheKey, response.clone());
+      if (typeof waitUntil === 'function') waitUntil(put);
+      else await put;
+    } catch {
+      // Ignore cache put failures; response is still returned.
+    }
   }
 
   return response;
