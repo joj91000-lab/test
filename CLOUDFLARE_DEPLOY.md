@@ -1,50 +1,65 @@
-# TechPulse 科技脈動 · Cloudflare 部署指南
+# TechPulse / TechStream · Cloudflare Pages 部署（專案名：`techstream-ai`）
 
-本專案已全面優化 **Cloudflare Pages** 與 **Cloudflare Workers** 邊緣架構，提供無伺服器、全域 CDN 快取及零冷啟動運行。
-
----
-
-## 方式一：透過 Cloudflare Pages 控制台（最推薦、支援 Git 自動持續交付）
-
-1. 將本專案程式碼上傳或推送至您的 **GitHub** 或 **GitLab** 倉庫。
-2. 登入 [Cloudflare Dashboard](https://dash.cloudflare.com/)，點擊左側選單的 **Workers & Pages** -> **Create application** -> 選擇 **Pages**。
-3. 點擊 **Connect to Git** 並選取您的專案儲存庫。
-4. 設定建置參數（Build Settings）：
-   - **Framework preset**：`Vite`
-   - **Build command（建置指令）**：`npm run build`
-   - **Build output directory（建置輸出目錄）**：`dist`
-   - **Node.js Version**：建議設定環境變數 `NODE_VERSION` 為 `20` 或 `22`
-5. 點擊 **Save and Deploy**。
-6. Cloudflare Pages 會自動編譯前端靜態資產，並將 `functions/api/` 中的無伺服器函式部署至 Cloudflare 全球邊緣網路（Edge Network），即可獲得專屬的 `*.pages.dev` 網址！
+本專案以 **Cloudflare Pages** 部署靜態前端（`dist/`）與 `functions/api/` 邊緣函式。  
+**Gemini API Key 只放在 Cloudflare Secrets / 伺服器環境變數，絕不放進前端 bundle。**
 
 ---
 
-## 方式二：透過 Wrangler 命令列（CLI 一鍵發布）
+## 建立 Pages 專案 `techstream-ai`
 
-若您習慣使用終端機，可直接在本地端執行發布：
+### 方式一：Dashboard + Git（推薦）
 
-1. 先編譯靜態產物：
-   ```bash
-   npm run build
-   ```
+1. 推送本倉庫至 GitHub。
+2. [Cloudflare Dashboard](https://dash.cloudflare.com/) → **Workers & Pages** → **Create** → **Pages** → **Connect to Git**。
+3. 專案名稱設為：**`techstream-ai`**。
+4. Build settings：
+   - Framework preset：`Vite`
+   - Build command：`npm run build`
+   - Build output directory：`dist`
+   - Environment variable：`NODE_VERSION` = `22`
+5. **Save and Deploy**。
 
-2. 透過 Wrangler 部署至 Cloudflare Pages：
-   ```bash
-   npx wrangler pages deploy dist --project-name=techpulse-app
-   ```
+### 方式二：Wrangler CLI
 
-3. 依照終端機提示登入 Cloudflare 帳號，數秒內即可上線完成。
+```bash
+npm install
+npm run build
+npx wrangler pages deploy dist --project-name=techstream-ai
+```
+
+非互動環境需設定 `CLOUDFLARE_API_TOKEN`（以及建議設定 `CLOUDFLARE_ACCOUNT_ID`）。
 
 ---
 
-## ⚖️ 法律與著作權合規保證（Legal & IP Compliance）
+## 設定 Gemini Secret（必要）
 
-1. **原創商標名稱**：
-   - 品牌名稱採用 **TechPulse（科技脈動）**，無侵犯任何第三方商標（如 Techmeme 等）之法律風險。
-2. **公開 RSS 合理使用（Fair Use）原則**：
-   - 僅索引公開 XML/RSS 摘要資訊（非全文侵權搬運）。
-   - 每則報導均提供清楚的原文媒體標註（TechCrunch, The Verge, WIRED...）與直連官方文章出處之 Canonical Link。
-   - 所有標題與摘要繁體中文翻譯均為獨立教育導讀性衍生，符合資訊彙整與引用規範。
-3. **圖片資產合法性**：
-   - 無外部圖片的新聞均由前端即時向量程式碼（Procedural SVG）動態繪製，100% 自研原創無版權負擔。
-   - 外部 RSS 圖片設定 `referrerPolicy="no-referrer"` 並標註原創作者及來源媒體，遵循引用規範。
+在 Cloudflare 為 **Production**（以及 Preview，若需要）新增密鑰變數：
+
+- **Name**：`GEMINI_API_KEY`
+- **Type**：Secret
+
+Dashboard：`Workers & Pages` → `techstream-ai` → **Settings** → **Variables and Secrets** → **Add** → Secret。
+
+或 CLI：
+
+```bash
+npx wrangler pages secret put GEMINI_API_KEY --project-name=techstream-ai
+```
+
+本機開發：
+
+```bash
+cp .env.example .env
+# 編輯 .env 填入 GEMINI_API_KEY（勿提交）
+npm run dev
+```
+
+Pages Functions 會在 `/api/news`（與 `/api/translate`）使用此密鑰做繁中翻譯；前端只消費已翻譯欄位，不會看到 key。
+
+---
+
+## 法律與合規摘要
+
+- 品牌：TechPulse（科技脈動）
+- 僅彙整公開 RSS 摘要並標註原文來源與連結
+- 無 key 的外部圖時使用前端程序化 SVG 預覽圖

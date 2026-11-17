@@ -1,5 +1,8 @@
 // Cloudflare Pages Function for /api/news
 // Aligns payload shape with the Express server + UI (NewsItem).
+// Traditional Chinese fields are filled server-side via Gemini (GEMINI_API_KEY secret).
+
+import { enrichArticlesWithZh, type GeminiEnv } from '../utils/geminiTranslate';
 
 const RSS_SOURCES = [
   { id: 'techcrunch', name: 'TechCrunch', domain: 'techcrunch.com', url: 'https://techcrunch.com/feed/' },
@@ -203,7 +206,8 @@ function clusterStories(allNews: any[]) {
   });
 }
 
-export async function onRequestGet() {
+export async function onRequestGet(context: { env: GeminiEnv }) {
+  const { env } = context;
   const fetchPromises = RSS_SOURCES.map(async (src) => {
     try {
       const resp = await fetch(src.url, {
@@ -230,11 +234,14 @@ export async function onRequestGet() {
   });
 
   const clustered = clusterStories(allArticles);
+  // Gemini runs only on the edge/server — API key never ships to the browser.
+  const data = await enrichArticlesWithZh(env, clustered);
 
   return new Response(JSON.stringify({
     success: true,
-    data: clustered,
-    total: clustered.length,
+    data,
+    total: data.length,
+    translatedWithGemini: Boolean(env?.GEMINI_API_KEY),
     cached: false,
     timestamp: new Date().toISOString()
   }), {

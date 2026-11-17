@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import { XMLParser } from 'fast-xml-parser';
 import { createServer as createViteServer } from 'vite';
@@ -6,6 +7,7 @@ import { fileURLToPath } from 'url';
 
 import { execSync } from 'child_process';
 import fs from 'fs';
+import { enrichArticlesWithZh, translateTexts } from './functions/utils/geminiTranslate';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,6 +16,8 @@ const app = express();
 const PORT = 3000;
 
 app.use(express.json());
+
+const geminiEnv = { GEMINI_API_KEY: process.env.GEMINI_API_KEY };
 
 interface SourceConfig {
   id: string;
@@ -686,13 +690,16 @@ app.get('/api/news', async (req, res) => {
     });
 
     if (liveItems.length >= 5) {
-      cachedNews = clusterStories(liveItems);
+      const clustered = clusterStories(liveItems);
+      // Gemini key stays on the server (process.env / Cloudflare secret) — never in the client bundle.
+      cachedNews = await enrichArticlesWithZh(geminiEnv, clustered);
       lastFetchTime = now;
       return res.json({
         success: true,
         data: cachedNews,
         sourceCount: SOURCES.length,
         liveFetched: liveItems.length,
+        translatedWithGemini: Boolean(process.env.GEMINI_API_KEY),
         cached: false,
         lastUpdated: new Date().toISOString()
       });
@@ -707,6 +714,27 @@ app.get('/api/news', async (req, res) => {
     });
   } catch (error: any) {
     res.status(500).json({ success: false, error: 'Feed sync error' });
+  }
+});
+
+app.post('/api/translate', async (req, res) => {
+  if (!process.env.GEMINI_API_KEY) {
+    return res.status(503).json({ success: false, error: 'GEMINI_API_KEY is not configured on the server' });
+  }
+  try {
+    const kind = req.body?.kind === 'summary' ? 'summary' : 'title';
+    if (Array.isArray(req.body?.texts)) {
+      const texts = req.body.texts.map((t: unknown) => String(t || '')).slice(0, 40);
+      const data = await translateTexts(geminiEnv, texts, kind);
+      return res.json({ success: true, data });
+    }
+    if (Array.isArray(req.body?.articles)) {
+      const data = await enrichArticlesWithZh(geminiEnv, req.body.articles.slice(0, 40));
+      return res.json({ success: true, data });
+    }
+    return res.status(400).json({ success: false, error: 'Provide { texts } or { articles }' });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'translate failed' });
   }
 });
 

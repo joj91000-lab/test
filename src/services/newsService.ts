@@ -52,6 +52,7 @@ export async function fetchNewsArticles(forceRefresh = false): Promise<NewsItem[
   const userLikes = getStoredLikes();
   const localComments = getStoredComments();
 
+  // Prefer server-provided zh fields (Gemini via /api/news). Local dictionary is offline fallback only — never call Gemini from the browser.
   const enrichWithZh = (item: any): NewsItem => {
     const itemLocalComments = localComments.filter(c => c.newsId === item.id);
     const isLiked = userLikes.has(item.id);

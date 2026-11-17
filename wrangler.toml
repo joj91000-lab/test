@@ -1,4 +1,8 @@
-name = "techpulse-app"
+name = "techstream-ai"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 pages_build_output_dir = "dist"
+
+# Set the secret in Cloudflare (do not commit real keys):
+#   npx wrangler pages secret put GEMINI_API_KEY --project-name=techstream-ai
+# Or Dashboard → Workers & Pages → techstream-ai → Settings → Variables and Secrets

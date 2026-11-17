@@ -19,15 +19,16 @@ npm run build
 
 Output: `dist/` (Pages static assets). Edge APIs live under `functions/api/`.
 
-## Cloudflare Pages deploy
+## Cloudflare Pages deploy (`techstream-ai`)
 
 See [CLOUDFLARE_DEPLOY.md](./CLOUDFLARE_DEPLOY.md).
 
-CLI (requires Cloudflare auth):
+Gemini translations run in Pages Functions / Express via `GEMINI_API_KEY` (Cloudflare Secret or local `.env`). The browser never receives the key.
 
 ```bash
 npm run build
-npx wrangler pages deploy dist --project-name=techpulse-app
+npx wrangler pages deploy dist --project-name=techstream-ai
+npx wrangler pages secret put GEMINI_API_KEY --project-name=techstream-ai
 ```
 
-In non-interactive environments set `CLOUDFLARE_API_TOKEN` (and optionally `CLOUDFLARE_ACCOUNT_ID`).
+Non-interactive CI needs `CLOUDFLARE_API_TOKEN` (and optionally `CLOUDFLARE_ACCOUNT_ID`).
