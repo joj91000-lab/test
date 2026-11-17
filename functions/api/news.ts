@@ -206,8 +206,32 @@ function clusterStories(allNews: any[]) {
   });
 }
 
-export async function onRequestGet(context: { env: GeminiEnv }) {
+const NEWS_TTL_MS = 180_000;
+let newsCache: { at: number; body: string; etag: string } | null = null;
+
+function newsHeaders(extra: Record<string, string> = {}) {
+  return {
+    'Content-Type': 'application/json; charset=utf-8',
+    // Query strings are ignored by this handler; keep a single CDN key for /api/news.
+    'Cache-Control': 'public, max-age=180, s-maxage=180',
+    'CDN-Cache-Control': 'public, max-age=180',
+    ...extra
+  };
+}
+
+export async function onRequestGet(context: { request: Request; env: GeminiEnv }) {
   const { env } = context;
+  // Intentionally ignore request URL query (?refresh=…) — public cache-busting burns Gemini quota.
+  const now = Date.now();
+  if (newsCache && now - newsCache.at < NEWS_TTL_MS) {
+    return new Response(newsCache.body, {
+      headers: newsHeaders({
+        ETag: newsCache.etag,
+        'X-News-Cache': 'HIT'
+      })
+    });
+  }
+
   const fetchPromises = RSS_SOURCES.map(async (src) => {
     try {
       const resp = await fetch(src.url, {
@@ -237,17 +261,21 @@ export async function onRequestGet(context: { env: GeminiEnv }) {
   // Gemini runs only on the edge/server — API key never ships to the browser.
   const data = await enrichArticlesWithZh(env, clustered);
 
-  return new Response(JSON.stringify({
+  const body = JSON.stringify({
     success: true,
     data,
     total: data.length,
     translatedWithGemini: Boolean(env?.GEMINI_API_KEY),
     cached: false,
     timestamp: new Date().toISOString()
-  }), {
-    headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'public, max-age=180'
-    }
+  });
+  const etag = `"news-${stableHash(body).toString(36)}"`;
+  newsCache = { at: now, body, etag };
+
+  return new Response(body, {
+    headers: newsHeaders({
+      ETag: etag,
+      'X-News-Cache': 'MISS'
+    })
   });
 }

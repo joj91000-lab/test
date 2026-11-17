@@ -54,7 +54,7 @@ cp .env.example .env
 npm run dev
 ```
 
-Pages Functions 會在 `/api/news`（與 `/api/translate`）使用此密鑰做繁中翻譯；前端只消費已翻譯欄位，不會看到 key。
+Pages Functions 只在 `/api/news` 內部使用此密鑰做繁中翻譯（無公開 translate proxy）；前端只消費已翻譯欄位，不會看到 key。
 
 ---
 

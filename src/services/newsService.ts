@@ -84,7 +84,10 @@ export async function fetchNewsArticles(forceRefresh = false): Promise<NewsItem[
   };
 
   try {
-    const res = await fetch(`/api/news${forceRefresh ? '?refresh=true' : ''}`);
+    // Never append cache-busting query strings — they fragment CDN caches and amplify Gemini spend.
+    // Local Express may still refresh from its TTL / ALLOW_NEWS_REFRESH; the URL stays /api/news.
+    void forceRefresh;
+    const res = await fetch('/api/news');
     if (res.ok) {
       const json = await res.json();
       if (json.success && Array.isArray(json.data) && json.data.length > 0) {

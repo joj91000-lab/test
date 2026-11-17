@@ -94,15 +94,17 @@ export async function translateTexts(
   kind: 'title' | 'summary'
 ): Promise<string[]> {
   const apiKey = env?.GEMINI_API_KEY?.trim();
+  const maxLen = kind === 'title' ? 400 : 1200;
+  const capped = texts.map((t) => String(t || '').slice(0, maxLen)).slice(0, 80);
   if (!apiKey) {
-    return texts.map((t) => fallbackTranslate(t, kind));
+    return capped.map((t) => fallbackTranslate(t, kind));
   }
 
-  const out = new Array<string>(texts.length);
+  const out = new Array<string>(capped.length);
   const chunkSize = 12;
 
-  for (let i = 0; i < texts.length; i += chunkSize) {
-    const slice = texts.slice(i, i + chunkSize);
+  for (let i = 0; i < capped.length; i += chunkSize) {
+    const slice = capped.slice(i, i + chunkSize);
     try {
       const translated = await geminiTranslateBatch(apiKey, slice, kind);
       if (translated) {
@@ -129,13 +131,15 @@ export async function enrichArticlesWithZh<T extends {
 }>(env: GeminiEnv | undefined, articles: T[]): Promise<T[]> {
   if (articles.length === 0) return articles;
 
-  const titles = articles.map((a) => a.title);
-  const summaries = articles.map((a) => a.summary || a.title);
+  // Cap work per request so a large RSS fan-out cannot unbounded-spend Gemini.
+  const limited = articles.slice(0, 80);
+  const titles = limited.map((a) => a.title);
+  const summaries = limited.map((a) => a.summary || a.title);
   const relatedTitles: string[] = [];
   const relatedIndex: Array<{ articleIdx: number; relatedIdx: number }> = [];
 
-  articles.forEach((a, articleIdx) => {
-    (a.relatedStories || []).forEach((r, relatedIdx) => {
+  limited.forEach((a, articleIdx) => {
+    (a.relatedStories || []).slice(0, 4).forEach((r, relatedIdx) => {
       relatedTitles.push(r.title);
       relatedIndex.push({ articleIdx, relatedIdx });
     });
@@ -147,8 +151,8 @@ export async function enrichArticlesWithZh<T extends {
     translateTexts(env, relatedTitles, 'title')
   ]);
 
-  return articles.map((article, i) => {
-    const relatedStories = (article.relatedStories || []).map((r, relatedIdx) => {
+  return limited.map((article, i) => {
+    const relatedStories = (article.relatedStories || []).slice(0, 4).map((r, relatedIdx) => {
       const flatIdx = relatedIndex.findIndex(
         (x) => x.articleIdx === i && x.relatedIdx === relatedIdx
       );

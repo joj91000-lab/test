@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 
 import { execSync } from 'child_process';
 import fs from 'fs';
-import { enrichArticlesWithZh, translateTexts } from './functions/utils/geminiTranslate';
+import { enrichArticlesWithZh } from './functions/utils/geminiTranslate';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -665,7 +665,12 @@ function clusterStories(allNews: any[]) {
 
 // API Routes
 app.get('/api/news', async (req, res) => {
-  const forceRefresh = req.query.refresh === 'true';
+  // Public clients cannot cache-bust Gemini/RSS. Local/dev may refresh only when
+  // ALLOW_NEWS_REFRESH=true (still no open proxy — translation stays inside /api/news).
+  const forceRefresh =
+    process.env.ALLOW_NEWS_REFRESH === 'true' &&
+    process.env.NODE_ENV !== 'production' &&
+    req.query.refresh === 'true';
   const now = Date.now();
 
   if (!forceRefresh && cachedNews.length > 0 && now - lastFetchTime < CACHE_TTL_MS) {
@@ -674,6 +679,7 @@ app.get('/api/news', async (req, res) => {
       data: cachedNews,
       sourceCount: SOURCES.length,
       cached: true,
+      translatedWithGemini: Boolean(process.env.GEMINI_API_KEY),
       lastUpdated: new Date(lastFetchTime).toISOString()
     });
   }
@@ -714,27 +720,6 @@ app.get('/api/news', async (req, res) => {
     });
   } catch (error: any) {
     res.status(500).json({ success: false, error: 'Feed sync error' });
-  }
-});
-
-app.post('/api/translate', async (req, res) => {
-  if (!process.env.GEMINI_API_KEY) {
-    return res.status(503).json({ success: false, error: 'GEMINI_API_KEY is not configured on the server' });
-  }
-  try {
-    const kind = req.body?.kind === 'summary' ? 'summary' : 'title';
-    if (Array.isArray(req.body?.texts)) {
-      const texts = req.body.texts.map((t: unknown) => String(t || '')).slice(0, 40);
-      const data = await translateTexts(geminiEnv, texts, kind);
-      return res.json({ success: true, data });
-    }
-    if (Array.isArray(req.body?.articles)) {
-      const data = await enrichArticlesWithZh(geminiEnv, req.body.articles.slice(0, 40));
-      return res.json({ success: true, data });
-    }
-    return res.status(400).json({ success: false, error: 'Provide { texts } or { articles }' });
-  } catch (err: any) {
-    return res.status(500).json({ success: false, error: err?.message || 'translate failed' });
   }
 });
 
