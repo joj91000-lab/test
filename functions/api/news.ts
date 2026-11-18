@@ -19,15 +19,26 @@ const RSS_SOURCES = [
 
 function cleanXml(text: string): string {
   if (!text) return '';
+  const named: Record<string, string> = {
+    amp: '&',
+    lt: '<',
+    gt: '>',
+    quot: '"',
+    apos: "'",
+    nbsp: ' '
+  };
   return text
     .replace(/<!\[CDATA\[(.*?)\]\]>/gs, '$1')
     .replace(/<[^>]*>?/gm, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#039;/g, "'")
-    .replace(/&nbsp;/g, ' ')
+    .replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (match, entity: string) => {
+      if (entity[0] === '#') {
+        const code = entity[1] === 'x' || entity[1] === 'X'
+          ? parseInt(entity.slice(2), 16)
+          : parseInt(entity.slice(1), 10);
+        return Number.isFinite(code) ? String.fromCodePoint(code) : match;
+      }
+      return named[entity] ?? match;
+    })
     .trim();
 }
 
@@ -208,8 +219,11 @@ function clusterStories(allNews: any[]) {
 
 const NEWS_TTL_MS = 180_000;
 let newsCache: { at: number; body: string; etag: string } | null = null;
+type NewsPayload = { body: string; etag: string; cacheable: boolean };
 /** Coalesce concurrent cold misses inside one isolate so Gemini is not fan-out amplified. */
-let newsInflight: Promise<{ body: string; etag: string }> | null = null;
+let newsInflight: Promise<NewsPayload> | null = null;
+/** Cloudflare Workers Cache API (`caches.default`) is missing from DOM lib typings. */
+const edgeCaches = caches as unknown as { default: Cache };
 
 function newsHeaders(extra: Record<string, string> = {}) {
   return {
@@ -284,7 +298,7 @@ export async function onRequestGet(context: {
   const cacheKey = pathOnlyCacheRequest(request);
 
   try {
-    const cached = await caches.default.match(cacheKey);
+    const cached = await edgeCaches.default.match(cacheKey);
     if (cached) {
       const headers = new Headers(cached.headers);
       headers.set('X-News-Cache', 'CDN-HIT');
@@ -335,7 +349,7 @@ export async function onRequestGet(context: {
 
   if (payload.cacheable) {
     try {
-      const put = caches.default.put(cacheKey, response.clone());
+      const put = edgeCaches.default.put(cacheKey, response.clone());
       if (typeof waitUntil === 'function') waitUntil(put);
       else await put;
     } catch {
