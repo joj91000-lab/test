@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
 import fs from 'fs';
 import { enrichArticlesWithZh } from './functions/utils/geminiTranslate';
+import { parseSafeHttpUrl, safeHttpUrl } from './functions/utils/safeHttpUrl';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -388,20 +389,26 @@ function cleanText(input: any): string {
 }
 
 function extractLink(item: any, fallbackUrl: string): string {
-  if (!item) return fallbackUrl;
-  if (typeof item.link === 'string' && item.link.startsWith('http')) return item.link;
+  const safeFallback = safeHttpUrl(fallbackUrl, 'https://example.com/');
+  if (!item) return safeFallback;
+
+  const candidates: unknown[] = [];
+  if (typeof item.link === 'string') candidates.push(item.link);
   if (Array.isArray(item.link)) {
     for (const l of item.link) {
-      if (typeof l === 'string' && l.startsWith('http')) return l;
-      if (l?.['@_href'] && typeof l['@_href'] === 'string') return l['@_href'];
+      if (typeof l === 'string') candidates.push(l);
+      if (l?.['@_href']) candidates.push(l['@_href']);
     }
   }
-  if (item.link?.['@_href'] && typeof item.link['@_href'] === 'string') return item.link['@_href'];
-  if (typeof item.guid === 'string' && item.guid.startsWith('http')) return item.guid;
-  if (item.guid?.['#text'] && typeof item.guid['#text'] === 'string' && item.guid['#text'].startsWith('http')) {
-    return item.guid['#text'];
+  if (item.link?.['@_href']) candidates.push(item.link['@_href']);
+  if (typeof item.guid === 'string') candidates.push(item.guid);
+  if (item.guid?.['#text']) candidates.push(item.guid['#text']);
+
+  for (const candidate of candidates) {
+    const ok = parseSafeHttpUrl(candidate);
+    if (ok) return ok;
   }
-  return fallbackUrl;
+  return safeFallback;
 }
 
 function extractImage(item: any, rawDesc: any): string | undefined {
@@ -412,11 +419,17 @@ function extractImage(item: any, rawDesc: any): string | undefined {
   if (mediaContent) {
     if (typeof mediaContent === 'object') {
       const url = mediaContent['@_url'] || mediaContent.url;
-      if (typeof url === 'string' && url.startsWith('http')) return url;
+      if (typeof url === 'string') {
+        const ok = parseSafeHttpUrl(url);
+        if (ok) return ok;
+      }
     } else if (Array.isArray(mediaContent) && mediaContent.length > 0) {
       const first = mediaContent[0];
       const url = first?.['@_url'] || first?.url;
-      if (typeof url === 'string' && url.startsWith('http')) return url;
+      if (typeof url === 'string') {
+        const ok = parseSafeHttpUrl(url);
+        if (ok) return ok;
+      }
     }
   }
 
@@ -424,7 +437,8 @@ function extractImage(item: any, rawDesc: any): string | undefined {
   const enclosure = item.enclosure;
   if (enclosure) {
     const url = enclosure['@_url'] || enclosure.url;
-    if (typeof url === 'string' && url.startsWith('http')) return url;
+    const ok = parseSafeHttpUrl(url);
+    if (ok) return ok;
   }
 
   // 3. Extract <img> tag from HTML description or content:encoded
@@ -435,11 +449,11 @@ function extractImage(item: any, rawDesc: any): string | undefined {
   ].join(' ');
 
   if (rawHtml) {
-    const match = rawHtml.match(/<img[^>]+src=["'](https?:\/\/[^"'\s>]+)["']/i);
+    const match = rawHtml.match(/<img[^>]+src=["']([^"'\s>]+)["']/i);
     if (match && match[1]) {
-      const img = match[1];
+      const img = parseSafeHttpUrl(match[1]);
       // Filter out tracking 1x1 pixels
-      if (!img.includes('1x1') && !img.includes('pixel') && !img.includes('feedads')) {
+      if (img && !img.includes('1x1') && !img.includes('pixel') && !img.includes('feedads')) {
         return img;
       }
     }
