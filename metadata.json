@@ -1,0 +1,6 @@
+{
+  "name": "TechPulse - US Top 10 Tech News Aggregator",
+  "description": "全美十大科技媒體即時 RSS 聚合快報，提供中英雙語對照摘要、即時科技社群討論與主題分類，合規合理使用開源摘要。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
