@@ -3,6 +3,7 @@
 // Traditional Chinese fields are filled server-side via Gemini (GEMINI_API_KEY secret).
 
 import { enrichArticlesWithZh, type GeminiEnv } from '../utils/geminiTranslate';
+import { safeHttpUrl } from '../utils/safeHttpUrl';
 
 const RSS_SOURCES = [
   { id: 'techcrunch', name: 'TechCrunch', domain: 'techcrunch.com', url: 'https://techcrunch.com/feed/' },
@@ -109,9 +110,10 @@ function parseItems(xmlText: string, source: (typeof RSS_SOURCES)[number]) {
                      itemXml.match(/<(?:media:content|media:thumbnail|enclosure)[^>]+url=["'](https?:\/\/[^"'\s>]+)["']/i);
 
     const title = cleanXml(titleMatch ? titleMatch[1] : '');
-    const link = linkMatch ? (linkMatch[1] || linkMatch[0]).replace(/<[^>]+>/g, '').trim() : `https://${source.domain}`;
+    const rawLink = linkMatch ? (linkMatch[1] || linkMatch[0]).replace(/<[^>]+>/g, '').trim() : '';
+    const link = safeHttpUrl(rawLink, `https://${source.domain}/`);
     const summary = cleanXml(descMatch ? descMatch[1] : '').slice(0, 340);
-    const imageUrl = imgMatch ? imgMatch[1] : undefined;
+    const imageUrl = imgMatch ? safeHttpUrl(imgMatch[1], `https://${source.domain}/`) : undefined;
     const rawDate = dateMatch ? cleanXml(dateMatch[1]) : '';
     const timestamp = (rawDate && !Number.isNaN(Date.parse(rawDate)) ? Date.parse(rawDate) : NaN)
       || (Date.now() - idx * 14 * 60 * 1000);

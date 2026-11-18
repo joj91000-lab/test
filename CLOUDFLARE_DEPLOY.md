@@ -33,10 +33,12 @@ npx wrangler pages deploy dist --project-name=techstream-ai
 
 ## 設定 Gemini Secret（必要）
 
+Gemini 只在後端呼叫（`functions/api/news.ts` / `server.ts` → `functions/utils/geminiTranslate.ts`），**前端永不持有 key**。
+
 在 Cloudflare 為 **Production**（以及 Preview，若需要）新增密鑰變數：
 
 - **Name**：`GEMINI_API_KEY`
-- **Type**：Secret
+- **Type**：Secret（Pages → Settings → Variables and Secrets）
 
 Dashboard：`Workers & Pages` → `techstream-ai` → **Settings** → **Variables and Secrets** → **Add** → Secret。
 
@@ -45,6 +47,8 @@ Dashboard：`Workers & Pages` → `techstream-ai` → **Settings** → **Variabl
 ```bash
 npx wrangler pages secret put GEMINI_API_KEY --project-name=techstream-ai
 ```
+
+設好後務必 **Redeploy**，讓 Pages Functions 讀到 secret。
 
 本機開發：
 
