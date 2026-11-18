@@ -48,21 +48,49 @@ function saveStoredComments(comments: NewsComment[]) {
   localStorage.setItem(USER_COMMENTS_STORAGE_KEY, JSON.stringify(comments));
 }
 
+function decodeHtmlEntities(input: string | undefined | null): string {
+  if (!input) return '';
+  const named: Record<string, string> = {
+    amp: '&',
+    lt: '<',
+    gt: '>',
+    quot: '"',
+    apos: "'",
+    nbsp: ' '
+  };
+  return input
+    .replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (match, entity: string) => {
+      if (entity[0] === '#') {
+        const code = entity[1] === 'x' || entity[1] === 'X'
+          ? parseInt(entity.slice(2), 16)
+          : parseInt(entity.slice(1), 10);
+        return Number.isFinite(code) ? String.fromCodePoint(code) : match;
+      }
+      return named[entity] ?? match;
+    });
+}
+
 export async function fetchNewsArticles(forceRefresh = false): Promise<NewsItem[]> {
   const userLikes = getStoredLikes();
   const localComments = getStoredComments();
 
   // Prefer server-provided zh fields (Gemini via /api/news). Local dictionary is offline fallback only — never call Gemini from the browser.
   const enrichWithZh = (item: any): NewsItem => {
+    const title = decodeHtmlEntities(item.title);
+    const summary = decodeHtmlEntities(item.summary);
     const itemLocalComments = localComments.filter(c => c.newsId === item.id);
     const isLiked = userLikes.has(item.id);
-    const titleZh = item.titleZh || translateTitle(item.title);
-    const summaryZh = item.summaryZh || translateSummary(item.summary);
-    const imageUrl = item.imageUrl || getEditorialPreviewImage(item.category || 'General', item.title, item.sourceName);
-    const relatedStories = item.relatedStories?.map((r: any) => ({
-      ...r,
-      titleZh: r.titleZh || translateTitle(r.title)
-    }));
+    const titleZh = decodeHtmlEntities(item.titleZh) || translateTitle(title);
+    const summaryZh = decodeHtmlEntities(item.summaryZh) || translateSummary(summary);
+    const imageUrl = item.imageUrl || getEditorialPreviewImage(item.category || 'General', title, item.sourceName);
+    const relatedStories = item.relatedStories?.map((r: any) => {
+      const relatedTitle = decodeHtmlEntities(r.title);
+      return {
+        ...r,
+        title: relatedTitle,
+        titleZh: decodeHtmlEntities(r.titleZh) || translateTitle(relatedTitle)
+      };
+    });
     const timestamp = typeof item.timestamp === 'number' && item.timestamp > 0
       ? item.timestamp
       : (item.pubDate || item.publishedAt ? Date.parse(item.pubDate || item.publishedAt) : Date.now());
@@ -71,6 +99,8 @@ export async function fetchNewsArticles(forceRefresh = false): Promise<NewsItem[
 
     return {
       ...item,
+      title,
+      summary,
       titleZh,
       summaryZh,
       imageUrl,
@@ -87,17 +117,20 @@ export async function fetchNewsArticles(forceRefresh = false): Promise<NewsItem[
     // Never append cache-busting query strings — they fragment CDN caches and amplify Gemini spend.
     // Local Express may still refresh from its TTL / ALLOW_NEWS_REFRESH; the URL stays /api/news.
     void forceRefresh;
-    const res = await fetch('/api/news');
-    if (res.ok) {
-      const json = await res.json();
-      if (json.success && Array.isArray(json.data) && json.data.length > 0) {
-        let combined = [...json.data];
-        if (combined.length < 5) {
-          combined = [...combined, ...SEED_NEWS.filter(s => !combined.some(c => c.title === s.title))];
-        }
-
-        return combined.map(enrichWithZh);
+    const res = await fetch('/api/news', { headers: { Accept: 'application/json' } });
+    const contentType = res.headers.get('content-type') || '';
+    // Cloudflare SPA fallback often returns index.html with 200 for missing Functions.
+    if (!res.ok || !contentType.includes('application/json')) {
+      throw new Error(`Unexpected /api/news response (${res.status} ${contentType || 'no-content-type'})`);
+    }
+    const json = await res.json();
+    if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+      let combined = [...json.data];
+      if (combined.length < 5) {
+        combined = [...combined, ...SEED_NEWS.filter(s => !combined.some(c => c.title === s.title))];
       }
+
+      return combined.map(enrichWithZh);
     }
   } catch (err) {
     console.warn('API fetch failed, falling back to seed news:', err);
